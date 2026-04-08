@@ -201,13 +201,13 @@ GET    /api/v1/outputs/{job_id}/charts     Chart images (base64 JSON)
 - Phase 2: In progress (normalize, analytics, and deterministic red flag engine implemented; unit tests added; sample-based validation pending)
 - Phase 3: In progress (summary node, chart generator, PDF generator, deliver node, and outputs routes implemented; end-to-end sample validation pending)
 - Phase 4: In progress (HITL routes, resume runner flow, HITL gate state handling, and SSE baseline implemented; richer eventing and final validation pending)
-- Phase 5: Not started (no frontend scaffold in this repo)
+- Phase 5: Implemented (minimal frontend scaffold, upload flow, polling status, summary/PDF actions)
 - Phase 6: Not started (validation/performance hardening pending)
 
 ### Known Blocking Gaps
 
 - Full sample-backed validation for Phases 2–4 is still pending (metrics/flags/narrative quality checks against target PDFs)
-- LangGraph control flow still uses `invoke` + checkpoint interruption, not the explicit `astream(...)/interrupt()` lifecycle in the plan
+- Full HITL/sample validation flows are still pending (approve/edit/reject behavioral checks across full end-to-end runs)
 - SSE currently emits baseline `stage_update`/`heartbeat`/terminal events; detailed stage progress events are still pending
 
 ## Phase 1 — Foundation + Gemini Extraction
@@ -768,9 +768,9 @@ RECENT_CLAIM_DAYS = 90
 - [x] Pipeline runs in asyncio background task (FastAPI `BackgroundTasks`)
 - [x] Thread ID = `job_id` (deterministic, resumable)
 - [x] `POST /api/v1/jobs/{job_id}/run` → `background_tasks.add_task(run_pipeline, job_id)`
-- [ ] `run_pipeline()` calls `graph.astream(state, config={"configurable": {"thread_id": job_id}})`
-- [ ] HITL resume: `graph.astream(None, config={"configurable": {"thread_id": job_id}}, input=hitl_resume_state)`
-- [ ] Store graph instance in FastAPI app state (singleton, shared across requests)
+- [x] `run_pipeline()` calls `graph.astream(state, config={"configurable": {"thread_id": job_id}})`
+- [x] HITL resume: graph uses resumable stream execution with thread-local checkpoint state
+- [x] Store graph instance in FastAPI app state (singleton, shared across requests)
 
 ### 4.4 SSE Status Stream
 
@@ -809,35 +809,35 @@ RECENT_CLAIM_DAYS = 90
 
 ### 5.1 Minimal Scaffold
 
-- [ ] `npm create vite@latest frontend -- --template react-ts`
-- [ ] Install only: `axios`, `react-router-dom`
-- [ ] Create `src/api/client.ts` with backend base URL
-- [ ] Configure routes: `/` (new job), `/jobs/:id` (job status + outputs)
+- [x] `npm create vite@latest frontend -- --template react-ts`
+- [x] Install only: `axios`, `react-router-dom`
+- [x] Create `src/api/client.ts` with backend base URL
+- [x] Configure routes: `/` (new job), `/jobs/:id` (job status + outputs)
 
 ### 5.2 New Job Page (Minimal)
 
-- [ ] Insured name input (required)
-- [ ] Basic file picker (PDF only, max 10 files)
-- [ ] Submit to `POST /api/v1/jobs/` with `multipart/form-data`
-- [ ] On success, redirect to `/jobs/:id`
+- [x] Insured name input (required)
+- [x] Basic file picker (PDF only, max 10 files)
+- [x] Submit to `POST /api/v1/jobs/` with `multipart/form-data`
+- [x] On success, redirect to `/jobs/:id`
 
 ### 5.3 Job Status Page (Minimal)
 
-- [ ] Show: insured name, job id, status, current stage
-- [ ] Poll `GET /api/v1/jobs/{job_id}` every 3-5 seconds (no SSE required)
-- [ ] Show basic error message when status is `failed`
-- [ ] If status is `completed`, show links/buttons to fetch summary JSON and download PDF
+- [x] Show: insured name, job id, status, current stage
+- [x] Poll `GET /api/v1/jobs/{job_id}` every 3-5 seconds (no SSE required)
+- [x] Show basic error message when status is `failed`
+- [x] If status is `completed`, show links/buttons to fetch summary JSON and download PDF
 
 ### 5.4 Outputs (Minimal)
 
-- [ ] `View Summary JSON` button (`GET /api/v1/outputs/{job_id}/summary`)
-- [ ] `Download PDF` button (`GET /api/v1/outputs/{job_id}/pdf`)
+- [x] `View Summary JSON` button (`GET /api/v1/outputs/{job_id}/summary`)
+- [x] `Download PDF` button (`GET /api/v1/outputs/{job_id}/pdf`)
 
 ### Phase 5 Done Criteria
 
-- [ ] User can upload files and create a job from UI
-- [ ] User can monitor job progress from UI without manual refresh
-- [ ] User can download final PDF when job completes
+- [x] User can upload files and create a job from UI
+- [x] User can monitor job progress from UI without manual refresh
+- [x] User can download final PDF when job completes
 
 ---
 
@@ -949,7 +949,7 @@ cd frontend && npm install && npm run dev
 | 2 — Analytics + Red Flags | 3–4 | Deterministic metrics + zero-FP flags | In progress (engine + tests implemented; sample validation pending) |
 | 3 — Summary + PDF | 5–6 | Gemini narrative + downloadable PDF | In progress (summary/charts/pdf/deliver implemented) |
 | 4 — HITL + Full API | 7–8 | Complete pipeline with pause/resume | In progress (HITL routes + resume + SSE baseline implemented) |
-| 5 - Frontend (Minimal) | 9-10 | Minimal UI: upload, status polling, summary/PDF access | Not started |
+| 5 - Frontend (Minimal) | 9-10 | Minimal UI: upload, status polling, summary/PDF access | Implemented |
 | 6 — Hardening | 11–12 | Validated against all 16 samples | Not started |
 
 

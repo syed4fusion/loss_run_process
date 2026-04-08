@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -26,7 +25,7 @@ def _parse_summary(summary_json: str | None, job_id: str) -> dict:
         return UnderwriterSummary(job_id=job_id).model_dump(mode="json")
 
 
-def deliver_node(state: PipelineState) -> PipelineState:
+async def deliver_node(state: PipelineState) -> PipelineState:
     job_id = state["job_id"]
     claims_array = state.get("claims_array") or {}
     analytics = state.get("analytics") or {}
@@ -45,7 +44,7 @@ def deliver_node(state: PipelineState) -> PipelineState:
         red_flags=red_flags,
         charts=charts,
     )
-    pdf_path = asyncio.run(save_output(job_id, "underwriter_summary.pdf", pdf_bytes))
+    pdf_path = await save_output(job_id, "underwriter_summary.pdf", pdf_bytes)
 
     db = SessionLocal()
     try:

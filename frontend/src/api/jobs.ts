@@ -1,9 +1,11 @@
 import { apiClient } from "./client";
 import type { JobResponse } from "../types";
 
-export async function createJob(insuredName: string, files: File[]): Promise<JobResponse> {
+export async function createJob(files: File[], insuredName?: string): Promise<JobResponse> {
   const formData = new FormData();
-  formData.append("insured_name", insuredName);
+  if (insuredName?.trim()) {
+    formData.append("insured_name", insuredName.trim());
+  }
   for (const file of files) {
     formData.append("files", file);
   }
@@ -16,4 +18,8 @@ export async function createJob(insuredName: string, files: File[]): Promise<Job
 export async function getJob(jobId: string): Promise<JobResponse> {
   const { data } = await apiClient.get<JobResponse>(`/api/v1/jobs/${jobId}`);
   return data;
+}
+
+export async function runJob(jobId: string): Promise<void> {
+  await apiClient.post(`/api/v1/jobs/${jobId}/run`);
 }

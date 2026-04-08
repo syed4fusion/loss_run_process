@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, Form
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.job import Job, JobFile
+from app.models.job import Job, JobFile, JobStatus
 from app.models.output import JobOutput
 from app.schemas.jobs import JobListResponse, JobResponse
 from app.services import storage
@@ -19,7 +20,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 @router.post("/", response_model=JobResponse, status_code=201)
 async def create_job(
-    insured_name: str = Form(...),
+    insured_name: str | None = Form(None),
     files: List[UploadFile] = ...,
     db: Session = Depends(get_db),
 ):
@@ -28,7 +29,12 @@ async def create_job(
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"Maximum {MAX_FILES} files allowed")
 
-    job = Job(insured_name=insured_name)
+    normalized_name = (insured_name or "").strip()
+    if not normalized_name:
+        first_filename = (files[0].filename or "Uploaded PDF").strip()
+        normalized_name = Path(first_filename).stem or "Uploaded PDF"
+
+    job = Job(insured_name=normalized_name)
     db.add(job)
     db.flush()  # get job.id
 
@@ -95,7 +101,7 @@ def run_job(
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.status not in ("pending", "failed"):
+    if job.status not in (JobStatus.pending, JobStatus.failed):
         raise HTTPException(409, f"Job is already in status '{job.status}'")
 
     background_tasks.add_task(_run_pipeline_bg, job_id)

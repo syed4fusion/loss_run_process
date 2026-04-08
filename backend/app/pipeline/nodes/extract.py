@@ -25,7 +25,7 @@ async def _extract_one(file_path: str, client: GeminiClient) -> dict:
         client.delete_file(file_ref)
 
 
-def extract_node(state: PipelineState) -> PipelineState:
+async def extract_node(state: PipelineState) -> PipelineState:
     job_id = state["job_id"]
     file_paths = state.get("file_paths", [])
     errors = list(state.get("errors", []))
@@ -38,14 +38,18 @@ def extract_node(state: PipelineState) -> PipelineState:
             job.current_stage = "extract"
             db.commit()
 
-        async def _run_all():
-            client = get_gemini_client()
-            tasks = [_extract_one(fp, client) for fp in file_paths]
-            return await asyncio.gather(*tasks, return_exceptions=True)
+        job_files = (
+            db.query(JobFile)
+            .filter(JobFile.job_id == job_id, JobFile.file_path.in_(file_paths))
+            .all()
+        )
+        for job_file in job_files:
+            job_file.extraction_status = ExtractionStatus.processing
+        db.commit()
 
-        # This node executes in a worker thread (runner uses asyncio.to_thread),
-        # so it is safe to create and close a local event loop with asyncio.run.
-        results = asyncio.run(_run_all())
+        client = get_gemini_client()
+        tasks = [asyncio.create_task(_extract_one(fp, client)) for fp in file_paths]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for fp, result in zip(file_paths, results):
             if isinstance(result, Exception):
@@ -65,7 +69,13 @@ def extract_node(state: PipelineState) -> PipelineState:
                     jf.lob_code = result.get("lob")
                     jf.policy_period_start = result.get("policy_period_start")
                     jf.policy_period_end = result.get("policy_period_end")
-                    jf.extraction_status = ExtractionStatus.completed
+                    if result.get("_malformed_json"):
+                        errors.append(
+                            f"Extraction produced malformed JSON for '{fp}'. Raw response stored in extraction payload."
+                        )
+                        jf.extraction_status = ExtractionStatus.failed
+                    else:
+                        jf.extraction_status = ExtractionStatus.completed
                     db.commit()
 
         if not raw_extractions:

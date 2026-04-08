@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+backend/pytest-cache-files-*/
+backend/.tmp/
+backend/.test_tmp/
 backend/.venv/
 
 # Local DB and transient backend artifacts

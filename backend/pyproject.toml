@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "loss-run-triage"
@@ -14,8 +14,9 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "google-generativeai>=0.8",
+    "google-genai>=1.0.0",
     "langgraph>=0.2",
+    "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain-core>=0.3",
     "pandas>=2.2",
     "numpy>=1.26",
@@ -41,3 +42,4 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = ["-p", "no:cacheprovider"]

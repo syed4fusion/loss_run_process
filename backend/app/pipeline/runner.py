@@ -1,23 +1,9 @@
-"""Pipeline runner used by jobs route background task."""
-
-import asyncio
 from datetime import datetime, timezone
 
-from app.config import settings
 from app.database import SessionLocal
 from app.models.job import Job, JobStatus
-from app.pipeline.graph import build_graph
+from app.pipeline.runtime import get_graph
 from app.pipeline.state import PipelineState
-
-_GRAPH = None
-
-
-def _get_graph():
-    global _GRAPH
-    if _GRAPH is None:
-        _GRAPH = build_graph(settings.DATABASE_URL)
-    return _GRAPH
-
 
 async def run_pipeline(job_id: str) -> None:
     db = SessionLocal()
@@ -30,7 +16,7 @@ async def run_pipeline(job_id: str) -> None:
         job.current_stage = "ingest"
         db.commit()
 
-        graph = _get_graph()
+        graph = get_graph()
         initial_state: PipelineState = {
             "job_id": job.id,
             "insured_name": job.insured_name,
@@ -39,8 +25,7 @@ async def run_pipeline(job_id: str) -> None:
             "completed": False,
             "rejection_count": 0,
         }
-        await asyncio.to_thread(
-            graph.invoke,
+        await graph.ainvoke(
             initial_state,
             {"configurable": {"thread_id": job_id}},
         )
@@ -79,15 +64,14 @@ async def resume_pipeline(
         job.current_stage = "hitl_resume"
         db.commit()
 
-        graph = _get_graph()
+        graph = get_graph()
         resume_state: PipelineState = {
             "job_id": job_id,
             "hitl_action": hitl_action,
             "hitl_edit_content": hitl_edit_content,
             "current_stage": "hitl_pending",
         }
-        await asyncio.to_thread(
-            graph.invoke,
+        await graph.ainvoke(
             resume_state,
             {"configurable": {"thread_id": job_id}},
         )

@@ -11,12 +11,27 @@ logger = logging.getLogger(__name__)
 PDF_MAGIC = b"%PDF"
 
 
-def _is_valid_pdf(path: str) -> bool:
+def _pdf_validation_error(path: str) -> str | None:
     try:
         with open(path, "rb") as f:
-            return f.read(4) == PDF_MAGIC
+            header = f.read(4)
+            if header != PDF_MAGIC:
+                return "is not a valid PDF (bad magic bytes)"
+
+            # Heuristic encryption detection (common in password-protected PDFs).
+            # We check both early and late file sections because trailer dictionaries
+            # may reference /Encrypt near the end.
+            first_chunk = f.read(1024 * 1024)
+            f.seek(0, 2)
+            size = f.tell()
+            tail_size = min(size, 1024 * 1024)
+            f.seek(max(0, size - tail_size))
+            tail_chunk = f.read(tail_size)
+            if b"/Encrypt" in first_chunk or b"/Encrypt" in tail_chunk:
+                return "appears to be password-protected/encrypted and cannot be processed"
+            return None
     except OSError:
-        return False
+        return "could not be opened for validation"
 
 
 def ingest_node(state: PipelineState) -> PipelineState:
@@ -39,8 +54,9 @@ def ingest_node(state: PipelineState) -> PipelineState:
             if not Path(f.file_path).exists():
                 errors.append(f"File not found on disk: {f.filename}")
                 continue
-            if not _is_valid_pdf(f.file_path):
-                errors.append(f"'{f.filename}' is not a valid PDF (bad magic bytes)")
+            validation_error = _pdf_validation_error(f.file_path)
+            if validation_error:
+                errors.append(f"'{f.filename}' {validation_error}")
                 continue
             file_paths.append(f.file_path)
 

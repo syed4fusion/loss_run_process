@@ -72,7 +72,7 @@ def _fallback_summary(
     )
 
 
-def _build_main_summary(
+async def _build_main_summary(
     *,
     job_id: str,
     insured_name: str,
@@ -94,7 +94,7 @@ def _build_main_summary(
         open_claims=open_claims,
     )
 
-    text = asyncio.run(client.generate_text(prompt))
+    text = await client.generate_text(prompt)
     try:
         payload = json.loads(text)
         payload["job_id"] = job_id
@@ -112,7 +112,7 @@ def _build_main_summary(
         )
 
 
-def summary_node(state: PipelineState) -> PipelineState:
+async def summary_node(state: PipelineState) -> PipelineState:
     job_id = state["job_id"]
     insured_name = state.get("insured_name", "")
     claims_array = state.get("claims_array") or {}
@@ -122,15 +122,18 @@ def summary_node(state: PipelineState) -> PipelineState:
 
     # 3.1: generate one narrative sentence per confirmed red flag.
     client = get_gemini_client()
-    enriched_flags: list[dict] = []
-    for flag in flags:
+    async def _enrich_flag(flag: dict) -> dict:
         prompt = build_redflag_narrative_prompt(flag)
-        narrative = asyncio.run(client.generate_text(prompt)).strip()
+        narrative = (await client.generate_text(prompt)).strip()
         words = narrative.split()
         narrative = " ".join(words[:100])
         updated = dict(flag)
         updated["narrative"] = narrative
-        enriched_flags.append(updated)
+        return updated
+
+    enriched_flags: list[dict] = []
+    if flags:
+        enriched_flags = await asyncio.gather(*[_enrich_flag(flag) for flag in flags])
 
     red_report = {**red_report, "flags": enriched_flags}
 
@@ -140,7 +143,7 @@ def summary_node(state: PipelineState) -> PipelineState:
     ]
     open_claims = [c for c in claims if str(c.get("status", "")).lower() == "open"]
 
-    summary = _build_main_summary(
+    summary = await _build_main_summary(
         job_id=job_id,
         insured_name=insured_name,
         analytics=analytics,

@@ -14,14 +14,14 @@ from app.models.output import JobOutput
 router = APIRouter()
 
 
-def _get_job_and_output(job_id: str, db: Session) -> tuple[Job, JobOutput]:
+def _get_job_and_output(job_id: str, db: Session, *, require_completed: bool = True) -> tuple[Job, JobOutput]:
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(404, "Job not found")
     output = db.query(JobOutput).filter(JobOutput.job_id == job_id).first()
     if not output:
         raise HTTPException(404, "Output not found")
-    if job.status != JobStatus.completed:
+    if require_completed and job.status != JobStatus.completed:
         raise HTTPException(409, f"Job not completed (status={job.status})")
     return job, output
 
@@ -37,7 +37,8 @@ def _parse_json(value: str | None, name: str):
 
 @router.get("/{job_id}/claims")
 def get_claims(job_id: str, db: Session = Depends(get_db)):
-    _, output = _get_job_and_output(job_id, db)
+    # Claims are first available right after extraction, before final completion.
+    _, output = _get_job_and_output(job_id, db, require_completed=False)
     return _parse_json(output.claims_json, "claims")
 
 
