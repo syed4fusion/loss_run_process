@@ -1,9 +1,21 @@
+import json
 from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.models.job import Job, JobStatus
+from app.models.output import JobOutput
 from app.pipeline.runtime import get_graph
+from app.pipeline.nodes.deliver import deliver_node
 from app.pipeline.state import PipelineState
+
+
+def _load_json(value: str | None, default):
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
 
 def run_pipeline(job_id: str) -> None:
     db = SessionLocal()
@@ -63,6 +75,26 @@ def resume_pipeline(
         job.status = JobStatus.running
         job.current_stage = "hitl_resume"
         db.commit()
+
+        if hitl_action in {"approve", "edit"}:
+            output = db.query(JobOutput).filter(JobOutput.job_id == job_id).first()
+            if not output:
+                raise RuntimeError("Job output not found")
+
+            deliver_state: PipelineState = {
+                "job_id": job_id,
+                "insured_name": job.insured_name,
+                "claims_array": _load_json(output.claims_json, {}),
+                "analytics": _load_json(output.analytics_json, {}),
+                "red_flags": _load_json(output.redflags_json, {"flags": []}),
+                "draft_summary": output.draft_summary,
+                "final_summary": hitl_edit_content if hitl_action == "edit" else output.draft_summary,
+                "current_stage": "hitl_resume",
+                "completed": False,
+                "errors": [],
+            }
+            deliver_node(deliver_state)
+            return
 
         graph = get_graph()
         resume_state: PipelineState = {

@@ -12,6 +12,7 @@ import {
   formatFlagType,
   formatPercent,
   formatYearSpan,
+  markReviewSubmitted,
   saveReviewSnapshot,
 } from "../workflow";
 
@@ -154,6 +155,7 @@ export default function ReviewPage() {
       } else {
         await approveHitl(jobId, reviewerId.trim());
       }
+      markReviewSubmitted(jobId);
       navigate(`/jobs/${jobId}/result`);
     } catch (err: any) {
       setError(err?.response?.data?.detail ?? "Unable to submit the review.");

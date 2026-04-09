@@ -4,16 +4,19 @@ import { getJob } from "../api/jobs";
 import { buildPdfUrl, getAnalytics, getClaims, getRedflags, getSummary } from "../api/outputs";
 import type { AnalyticsResult, ClaimsArray, JobResponse, RedFlagReport, SummarySections } from "../types";
 import {
+  clearReviewSubmitted,
   flattenClaims,
   formatCurrency,
   formatDate,
   formatFlagType,
   formatPercent,
   formatYearSpan,
+  getReviewSubmittedAt,
   loadReviewSnapshot,
 } from "../workflow";
 
 const POLL_MS = 2000;
+const REVIEW_SUBMIT_GRACE_MS = 30000;
 
 export default function ResultPage() {
   const { id } = useParams<{ id: string }>();
@@ -47,10 +50,17 @@ export default function ResultPage() {
         setJob(nextJob);
 
         if (nextJob.status === "hitl_pending") {
-          navigate(`/jobs/${jobId}/review`, { replace: true });
-          return;
+          const submittedAt = getReviewSubmittedAt(jobId);
+          const withinGraceWindow =
+            submittedAt !== null && Date.now() - new Date(submittedAt).getTime() < REVIEW_SUBMIT_GRACE_MS;
+          if (!withinGraceWindow) {
+            clearReviewSubmitted(jobId);
+            navigate(`/jobs/${jobId}/review`, { replace: true });
+            return;
+          }
         }
         if (nextJob.status === "failed") {
+          clearReviewSubmitted(jobId);
           setLoading(false);
           setError(nextJob.error_message ?? "The workflow failed.");
           return;
@@ -76,6 +86,7 @@ export default function ResultPage() {
         setClaims(reviewSnapshot?.claims ?? claimsData);
         setAnalytics(analyticsData);
         setRedflags(redflagsData);
+        clearReviewSubmitted(jobId);
         setLoading(false);
         setError(null);
       } catch (err: any) {

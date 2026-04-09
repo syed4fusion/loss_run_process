@@ -125,6 +125,22 @@ export function clearReviewSnapshot(jobId: string): void {
   window.sessionStorage.removeItem(reviewStorageKey(jobId));
 }
 
+function reviewSubmitKey(jobId: string): string {
+  return `loss-run-review-submit:${jobId}`;
+}
+
+export function markReviewSubmitted(jobId: string): void {
+  window.sessionStorage.setItem(reviewSubmitKey(jobId), new Date().toISOString());
+}
+
+export function getReviewSubmittedAt(jobId: string): string | null {
+  return window.sessionStorage.getItem(reviewSubmitKey(jobId));
+}
+
+export function clearReviewSubmitted(jobId: string): void {
+  window.sessionStorage.removeItem(reviewSubmitKey(jobId));
+}
+
 export function buildJobFileUrl(jobId: string, fileId: string): string {
   const base = apiClient.defaults.baseURL ?? "http://localhost:8000";
   return `${base}/api/v1/jobs/${jobId}/files/${fileId}`;
