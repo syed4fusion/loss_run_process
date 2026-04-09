@@ -3,6 +3,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.job import Job, JobFile, ExtractionStatus
 from app.models.output import JobOutput
@@ -13,7 +14,23 @@ from app.services.gemini_client import GeminiClient, get_gemini_client
 logger = logging.getLogger(__name__)
 
 
-def _extract_one(file_path: str, client: GeminiClient) -> dict:
+def _build_extraction_error_message(exc: Exception) -> str:
+    if GeminiClient.is_quota_exceeded_error(exc):
+        return (
+            "Gemini quota exceeded while extracting one or more files. "
+            "Reduce document count, wait for quota reset, switch to a paid quota/project, "
+            "or enable GEMINI_MOCK_MODE for local testing."
+        )
+    if GeminiClient.is_rate_limit_error(exc):
+        return (
+            "Gemini rate limit reached during extraction. "
+            "Retry after the reported cooldown or lower concurrency."
+        )
+    return f"All file extractions failed: {exc}"
+
+
+def _extract_one(file_path: str) -> dict:
+    client = get_gemini_client()
     file_ref = client.upload_pdf(file_path)
     try:
         result = client.extract_claims(
@@ -47,12 +64,11 @@ def extract_node(state: PipelineState) -> PipelineState:
             job_file.extraction_status = ExtractionStatus.processing
         db.commit()
 
-        client = get_gemini_client()
         results_by_file: dict[str, dict | Exception] = {}
-        max_workers = max(1, min(len(file_paths), 8))
+        max_workers = max(1, min(len(file_paths), settings.GEMINI_MAX_CONCURRENT_REQUESTS))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures_by_file = {
-                fp: executor.submit(_extract_one, fp, client) for fp in file_paths
+                fp: executor.submit(_extract_one, fp) for fp in file_paths
             }
             for fp, future in futures_by_file.items():
                 try:
@@ -89,9 +105,13 @@ def extract_node(state: PipelineState) -> PipelineState:
         if not raw_extractions:
             if job:
                 job.current_stage = "extract_failed"
-                job.error_message = "All file extractions failed"
+                first_error = next(
+                    (result for result in results_by_file.values() if isinstance(result, Exception)),
+                    RuntimeError("All file extractions failed"),
+                )
+                job.error_message = _build_extraction_error_message(first_error)
                 db.commit()
-            raise RuntimeError("All file extractions failed")
+            raise RuntimeError(job.error_message if job and job.error_message else "All file extractions failed")
 
         output = db.query(JobOutput).filter(JobOutput.job_id == job_id).first()
         if output:

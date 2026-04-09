@@ -4,12 +4,13 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.output import JobOutput
 from app.pipeline.state import PipelineState
 from app.prompts.summary import build_redflag_narrative_prompt, build_summary_prompt
 from app.schemas.summary import MANDATORY_DISCLAIMER, UnderwriterSummary
-from app.services.gemini_client import GeminiClient, get_gemini_client
+from app.services.gemini_client import get_gemini_client
 
 LARGE_LOSS_THRESHOLD = 25000.0
 
@@ -94,8 +95,8 @@ def _build_main_summary(
         open_claims=open_claims,
     )
 
-    text = client.generate_text(prompt)
     try:
+        text = client.generate_text(prompt)
         payload = json.loads(text)
         payload["job_id"] = job_id
         payload["disclaimer"] = MANDATORY_DISCLAIMER
@@ -112,13 +113,16 @@ def _build_main_summary(
         )
 
 
-def _enrich_flag(flag: dict, client: GeminiClient) -> dict:
+def _enrich_flag(flag: dict) -> dict:
+    client = get_gemini_client()
     prompt = build_redflag_narrative_prompt(flag)
-    narrative = client.generate_text(prompt).strip()
-    words = narrative.split()
-    narrative = " ".join(words[:100])
     updated = dict(flag)
-    updated["narrative"] = narrative
+    try:
+        narrative = client.generate_text(prompt).strip()
+        words = narrative.split()
+        updated["narrative"] = " ".join(words[:100])
+    except Exception:
+        updated["narrative"] = updated.get("narrative") or updated.get("rule_description") or "Narrative unavailable."
     return updated
 
 
@@ -132,10 +136,9 @@ def summary_node(state: PipelineState) -> PipelineState:
 
     enriched_flags: list[dict] = []
     if flags:
-        client = get_gemini_client()
-        max_workers = max(1, min(len(flags), 8))
+        max_workers = max(1, min(len(flags), settings.GEMINI_MAX_CONCURRENT_REQUESTS))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            enriched_flags = list(executor.map(lambda flag: _enrich_flag(flag, client), flags))
+            enriched_flags = list(executor.map(_enrich_flag, flags))
 
     red_report = {**red_report, "flags": enriched_flags}
 

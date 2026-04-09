@@ -7,6 +7,7 @@ import uuid
 
 from app.pipeline.nodes import analytics as analytics_module
 from app.pipeline.nodes import extract as extract_module
+from app.pipeline.nodes import summary as summary_module
 from app.pipeline.nodes.ingest import _pdf_validation_error
 from app.services.gemini_client import GeminiClient
 
@@ -179,8 +180,8 @@ def test_extract_node_processes_files_concurrently(monkeypatch):
         }
 
     monkeypatch.setattr(extract_module, "SessionLocal", lambda: _FakeSession())
-    monkeypatch.setattr(extract_module, "_extract_one", _fake_extract_one)
-    monkeypatch.setattr(extract_module, "get_gemini_client", lambda: object())
+    monkeypatch.setattr(extract_module, "_extract_one", lambda file_path: _fake_extract_one(file_path, object()))
+    monkeypatch.setattr(extract_module.settings, "GEMINI_MAX_CONCURRENT_REQUESTS", 8)
 
     started = monotonic()
     result = extract_module.extract_node(
@@ -195,3 +196,135 @@ def test_extract_node_processes_files_concurrently(monkeypatch):
     assert elapsed < 0.12
     assert len(result["raw_extractions"]) == 3
     assert all(f.extraction_status == extract_module.ExtractionStatus.completed for f in fake_files)
+
+
+def test_extract_node_sets_quota_specific_error_message(monkeypatch):
+    class _FakeJob:
+        current_stage = None
+        error_message = None
+
+    class _FakeQuery:
+        def __init__(self, target):
+            self.target = target
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            if self.target is extract_module.Job:
+                return fake_job
+            if self.target is extract_module.JobOutput:
+                return fake_output
+            if self.target is extract_module.JobFile:
+                return fake_file
+            return None
+
+        def all(self):
+            if self.target is extract_module.JobFile:
+                return [fake_file]
+            return []
+
+    class _FakeSession:
+        def query(self, target):
+            return _FakeQuery(target)
+
+        def commit(self):
+            return None
+
+        def close(self):
+            return None
+
+    class _QuotaError(Exception):
+        pass
+
+    fake_job = _FakeJob()
+    fake_output = type("Output", (), {"claims_json": None})()
+    fake_file = type(
+        "JobFile",
+        (),
+        {
+            "job_id": "job-quota",
+            "file_path": "file-a.pdf",
+            "extraction_status": None,
+            "carrier_code": None,
+            "lob_code": None,
+            "policy_period_start": None,
+            "policy_period_end": None,
+        },
+    )()
+
+    monkeypatch.setattr(extract_module, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(extract_module.settings, "GEMINI_MAX_CONCURRENT_REQUESTS", 1)
+    monkeypatch.setattr(
+        extract_module,
+        "_extract_one",
+        lambda file_path: (_ for _ in ()).throw(
+            _QuotaError("429 RESOURCE_EXHAUSTED. Quota exceeded for metric")
+        ),
+    )
+
+    try:
+        extract_module.extract_node(
+            {"job_id": "job-quota", "file_paths": ["file-a.pdf"], "errors": []}
+        )
+        assert False, "Expected extract_node to raise when all files fail"
+    except RuntimeError as exc:
+        assert "Gemini quota exceeded" in str(exc)
+        assert "GEMINI_MOCK_MODE" in str(exc)
+        assert "quota exceeded" in fake_job.error_message.lower()
+
+
+def test_summary_node_falls_back_when_text_generation_fails(monkeypatch):
+    class _FakeClient:
+        def generate_text(self, prompt: str, context: str = "") -> str:
+            raise RuntimeError("429 RESOURCE_EXHAUSTED. Quota exceeded for metric")
+
+    class _FakeOutput:
+        draft_summary = None
+        redflags_json = None
+
+    class _FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return fake_output
+
+    class _FakeSession:
+        def query(self, *args, **kwargs):
+            return _FakeQuery()
+
+        def commit(self):
+            return None
+
+        def close(self):
+            return None
+
+    fake_output = _FakeOutput()
+
+    monkeypatch.setattr(summary_module, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(summary_module, "get_gemini_client", lambda: _FakeClient())
+    monkeypatch.setattr(summary_module.settings, "GEMINI_MAX_CONCURRENT_REQUESTS", 1)
+
+    result = summary_module.summary_node(
+        {
+            "job_id": "job-summary",
+            "insured_name": "Test Insured",
+            "claims_array": {
+                "policy_periods": [
+                    {
+                        "claims": [
+                            {"amount_incurred": "30000", "status": "open"},
+                            {"amount_incurred": "1000", "status": "closed"},
+                        ]
+                    }
+                ]
+            },
+            "analytics": {"years_analyzed": [2024], "yearly_stats": [], "overall_loss_ratio": 0.2},
+            "red_flags": {"flags": [{"flag_type": "large_loss", "rule_description": "Large loss flag"}]},
+        }
+    )
+
+    assert result["current_stage"] == "summary"
+    assert "Test Insured" in result["draft_summary"]
+    assert "Large loss flag" in result["red_flags"]["flags"][0]["narrative"]

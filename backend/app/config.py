@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash-preview-05-20"
     GEMINI_MAX_REQUESTS_PER_SECOND: float = 2.0
+    GEMINI_MAX_CONCURRENT_REQUESTS: int = 1
     GEMINI_MOCK_MODE: bool = False
     STORAGE_BASE_PATH: str = "./data/jobs"
     DATABASE_URL: str = "sqlite:///./loss_run.db"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from threading import Lock
 from time import sleep
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 _RETRY_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 2.0  # seconds
 _MALFORMED_JSON_RAW_LIMIT = 10000
+_RETRY_DELAY_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 
 
 class GeminiClient:
@@ -45,6 +47,15 @@ class GeminiClient:
         text = str(exc).lower()
         return "rate limit" in text or "resourceexhausted" in text or "429" in text
 
+    @staticmethod
+    def is_rate_limit_error(exc: Exception) -> bool:
+        return GeminiClient._is_rate_limit_error(exc)
+
+    @staticmethod
+    def is_quota_exceeded_error(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return "quota exceeded" in text or "resource_exhausted" in text or "resourceexhausted" in text
+
     def _throttle(self) -> None:
         if self._min_interval <= 0:
             return
@@ -54,6 +65,17 @@ class GeminiClient:
             if wait_for > 0:
                 sleep(wait_for)
             self._last_call_ts = monotonic()
+
+    @staticmethod
+    def _retry_delay_from_error(exc: Exception, attempt: int) -> float:
+        text = str(exc)
+        match = _RETRY_DELAY_RE.search(text)
+        if match:
+            try:
+                return max(float(match.group(1)), _RETRY_BASE_DELAY)
+            except ValueError:
+                pass
+        return _RETRY_BASE_DELAY * (2**attempt)
 
     def upload_pdf(self, file_path: str) -> Any:
         """Upload a PDF to Gemini Files API. Returns a file reference."""
@@ -123,7 +145,8 @@ class GeminiClient:
                 if not self._is_rate_limit_error(exc):
                     raise
                 if attempt < _RETRY_ATTEMPTS - 1:
-                    delay = _RETRY_BASE_DELAY * (2**attempt)
+                    delay = self._retry_delay_from_error(exc, attempt)
+                    logger.warning("Rate limited for text generation; retrying in %.1fs", delay)
                     sleep(delay)
                 else:
                     raise
@@ -161,7 +184,7 @@ class GeminiClient:
                 if not self._is_rate_limit_error(exc):
                     raise
                 if attempt < _RETRY_ATTEMPTS - 1:
-                    delay = _RETRY_BASE_DELAY * (2**attempt)
+                    delay = self._retry_delay_from_error(exc, attempt)
                     logger.warning("Rate limited; retrying in %.1fs", delay)
                     sleep(delay)
                 else:
