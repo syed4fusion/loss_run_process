@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -45,7 +44,7 @@ def deliver_node(state: PipelineState) -> PipelineState:
         red_flags=red_flags,
         charts=charts,
     )
-    pdf_path = asyncio.run(save_output(job_id, "underwriter_summary.pdf", pdf_bytes))
+    pdf_path = save_output(job_id, "underwriter_summary.pdf", pdf_bytes)
 
     db = SessionLocal()
     try:

@@ -5,7 +5,7 @@ from app.models.job import Job, JobStatus
 from app.pipeline.runtime import get_graph
 from app.pipeline.state import PipelineState
 
-async def run_pipeline(job_id: str) -> None:
+def run_pipeline(job_id: str) -> None:
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
@@ -25,7 +25,7 @@ async def run_pipeline(job_id: str) -> None:
             "completed": False,
             "rejection_count": 0,
         }
-        await graph.ainvoke(
+        graph.invoke(
             initial_state,
             {"configurable": {"thread_id": job_id}},
         )
@@ -48,7 +48,7 @@ async def run_pipeline(job_id: str) -> None:
         db.close()
 
 
-async def resume_pipeline(
+def resume_pipeline(
     *,
     job_id: str,
     hitl_action: str,
@@ -71,7 +71,7 @@ async def resume_pipeline(
             "hitl_edit_content": hitl_edit_content,
             "current_stage": "hitl_pending",
         }
-        await graph.ainvoke(
+        graph.invoke(
             resume_state,
             {"configurable": {"thread_id": job_id}},
         )

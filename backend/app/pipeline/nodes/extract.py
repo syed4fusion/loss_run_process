@@ -1,7 +1,7 @@
-"""Extract node — sends each PDF to Gemini and collects raw extraction dicts."""
-import asyncio
+"""Extract node - sends each PDF to Gemini and collects raw extraction dicts."""
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.database import SessionLocal
 from app.models.job import Job, JobFile, ExtractionStatus
@@ -13,10 +13,10 @@ from app.services.gemini_client import GeminiClient, get_gemini_client
 logger = logging.getLogger(__name__)
 
 
-async def _extract_one(file_path: str, client: GeminiClient) -> dict:
-    file_ref = await client.upload_pdf(file_path)
+def _extract_one(file_path: str, client: GeminiClient) -> dict:
+    file_ref = client.upload_pdf(file_path)
     try:
-        result = await client.extract_claims(
+        result = client.extract_claims(
             file_ref, EXTRACTION_PROMPT, EXTRACTION_RESPONSE_SCHEMA
         )
         result["_source_file"] = file_path
@@ -25,7 +25,7 @@ async def _extract_one(file_path: str, client: GeminiClient) -> dict:
         client.delete_file(file_ref)
 
 
-async def extract_node(state: PipelineState) -> PipelineState:
+def extract_node(state: PipelineState) -> PipelineState:
     job_id = state["job_id"]
     file_paths = state.get("file_paths", [])
     errors = list(state.get("errors", []))
@@ -48,21 +48,29 @@ async def extract_node(state: PipelineState) -> PipelineState:
         db.commit()
 
         client = get_gemini_client()
-        tasks = [asyncio.create_task(_extract_one(fp, client)) for fp in file_paths]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results_by_file: dict[str, dict | Exception] = {}
+        max_workers = max(1, min(len(file_paths), 8))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures_by_file = {
+                fp: executor.submit(_extract_one, fp, client) for fp in file_paths
+            }
+            for fp, future in futures_by_file.items():
+                try:
+                    results_by_file[fp] = future.result()
+                except Exception as exc:
+                    results_by_file[fp] = exc
 
-        for fp, result in zip(file_paths, results):
+        for fp in file_paths:
+            result = results_by_file[fp]
             if isinstance(result, Exception):
                 errors.append(f"Extraction failed for '{fp}': {result}")
                 logger.error("Extraction error for %s: %s", fp, result)
-                # Mark corresponding JobFile as failed
                 jf = db.query(JobFile).filter(JobFile.job_id == job_id, JobFile.file_path == fp).first()
                 if jf:
                     jf.extraction_status = ExtractionStatus.failed
                     db.commit()
             else:
                 raw_extractions.append(result)
-                # Update JobFile metadata from extraction
                 jf = db.query(JobFile).filter(JobFile.job_id == job_id, JobFile.file_path == fp).first()
                 if jf:
                     jf.carrier_code = result.get("carrier_code") or result.get("carrier_name", "")[:16]
@@ -85,7 +93,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
                 db.commit()
             raise RuntimeError("All file extractions failed")
 
-        # Persist intermediate claims JSON
         output = db.query(JobOutput).filter(JobOutput.job_id == job_id).first()
         if output:
             output.claims_json = json.dumps(raw_extractions)

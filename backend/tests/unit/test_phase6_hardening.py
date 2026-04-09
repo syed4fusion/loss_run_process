@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from time import monotonic
+from time import sleep
 import uuid
 
 from app.pipeline.nodes import analytics as analytics_module
@@ -93,18 +93,16 @@ def test_extract_claims_stores_raw_on_malformed_json(monkeypatch):
 
     calls = {"count": 0}
 
-    async def _fake_generate_structured_response(*, contents, response_schema):
+    def _fake_generate_structured_response(*, contents, response_schema):
         calls["count"] += 1
         return _Resp('{"broken_json":')
 
     monkeypatch.setattr(client, "_generate_structured_response", _fake_generate_structured_response)
 
-    result = asyncio.run(
-        client.extract_claims(
-            file_ref={"name": "fake"},
-            prompt="extract",
-            response_schema={},
-        )
+    result = client.extract_claims(
+        file_ref={"name": "fake"},
+        prompt="extract",
+        response_schema={},
     )
 
     assert calls["count"] == 2
@@ -169,8 +167,8 @@ def test_extract_node_processes_files_concurrently(monkeypatch):
     fake_output = _FakeOutput()
     fake_files = [_FakeJobFile("file-a.pdf"), _FakeJobFile("file-b.pdf"), _FakeJobFile("file-c.pdf")]
 
-    async def _fake_extract_one(file_path: str, client) -> dict:
-        await asyncio.sleep(0.05)
+    def _fake_extract_one(file_path: str, client) -> dict:
+        sleep(0.05)
         return {
             "_source_file": file_path,
             "carrier_code": "TEST",
@@ -185,14 +183,12 @@ def test_extract_node_processes_files_concurrently(monkeypatch):
     monkeypatch.setattr(extract_module, "get_gemini_client", lambda: object())
 
     started = monotonic()
-    result = asyncio.run(
-        extract_module.extract_node(
-            {
-                "job_id": "job-concurrent",
-                "file_paths": [f.file_path for f in fake_files],
-                "errors": [],
-            }
-        )
+    result = extract_module.extract_node(
+        {
+            "job_id": "job-concurrent",
+            "file_paths": [f.file_path for f in fake_files],
+            "errors": [],
+        }
     )
     elapsed = monotonic() - started
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.database import SessionLocal
@@ -9,7 +9,7 @@ from app.models.output import JobOutput
 from app.pipeline.state import PipelineState
 from app.prompts.summary import build_redflag_narrative_prompt, build_summary_prompt
 from app.schemas.summary import MANDATORY_DISCLAIMER, UnderwriterSummary
-from app.services.gemini_client import get_gemini_client
+from app.services.gemini_client import GeminiClient, get_gemini_client
 
 LARGE_LOSS_THRESHOLD = 25000.0
 
@@ -94,7 +94,7 @@ def _build_main_summary(
         open_claims=open_claims,
     )
 
-    text = asyncio.run(client.generate_text(prompt))
+    text = client.generate_text(prompt)
     try:
         payload = json.loads(text)
         payload["job_id"] = job_id
@@ -112,6 +112,16 @@ def _build_main_summary(
         )
 
 
+def _enrich_flag(flag: dict, client: GeminiClient) -> dict:
+    prompt = build_redflag_narrative_prompt(flag)
+    narrative = client.generate_text(prompt).strip()
+    words = narrative.split()
+    narrative = " ".join(words[:100])
+    updated = dict(flag)
+    updated["narrative"] = narrative
+    return updated
+
+
 def summary_node(state: PipelineState) -> PipelineState:
     job_id = state["job_id"]
     insured_name = state.get("insured_name", "")
@@ -120,17 +130,12 @@ def summary_node(state: PipelineState) -> PipelineState:
     red_report = state.get("red_flags") or {"flags": []}
     flags = list(red_report.get("flags", []))
 
-    # 3.1: generate one narrative sentence per confirmed red flag.
-    client = get_gemini_client()
     enriched_flags: list[dict] = []
-    for flag in flags:
-        prompt = build_redflag_narrative_prompt(flag)
-        narrative = asyncio.run(client.generate_text(prompt)).strip()
-        words = narrative.split()
-        narrative = " ".join(words[:100])
-        updated = dict(flag)
-        updated["narrative"] = narrative
-        enriched_flags.append(updated)
+    if flags:
+        client = get_gemini_client()
+        max_workers = max(1, min(len(flags), 8))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            enriched_flags = list(executor.map(lambda flag: _enrich_flag(flag, client), flags))
 
     red_report = {**red_report, "flags": enriched_flags}
 

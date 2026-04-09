@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+from time import sleep
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,7 +26,7 @@ def stream_job(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(404, "Job not found")
 
-    async def generator():
+    def generator():
         last_stage = None
         while True:
             loop_db = SessionLocal()
@@ -49,6 +49,6 @@ def stream_job(job_id: str, db: Session = Depends(get_db)):
                     break
             finally:
                 loop_db.close()
-            await asyncio.sleep(1.0)
+            sleep(1.0)
 
     return StreamingResponse(generator(), media_type="text/event-stream")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
+from threading import Lock
+from time import sleep
 from time import monotonic
 from typing import Any
 
@@ -28,7 +29,7 @@ class GeminiClient:
             if settings.GEMINI_MAX_REQUESTS_PER_SECOND > 0
             else 0.0
         )
-        self._rate_lock = asyncio.Lock()
+        self._rate_lock = Lock()
         self._last_call_ts = 0.0
 
         if not self._mock_mode:
@@ -44,30 +45,26 @@ class GeminiClient:
         text = str(exc).lower()
         return "rate limit" in text or "resourceexhausted" in text or "429" in text
 
-    async def _throttle(self) -> None:
+    def _throttle(self) -> None:
         if self._min_interval <= 0:
             return
-        async with self._rate_lock:
+        with self._rate_lock:
             now = monotonic()
             wait_for = self._min_interval - (now - self._last_call_ts)
             if wait_for > 0:
-                await asyncio.sleep(wait_for)
+                sleep(wait_for)
             self._last_call_ts = monotonic()
 
-    async def upload_pdf(self, file_path: str) -> Any:
+    def upload_pdf(self, file_path: str) -> Any:
         """Upload a PDF to Gemini Files API. Returns a file reference."""
         if self._mock_mode:
             return {"name": Path(file_path).name, "path": file_path}
-        await self._throttle()
-        loop = asyncio.get_event_loop()
-        file_ref = await loop.run_in_executor(
-            None,
-            lambda: self._client.files.upload(file=file_path),
-        )
+        self._throttle()
+        file_ref = self._client.files.upload(file=file_path)
         logger.info("Uploaded %s -> %s", file_path, getattr(file_ref, "name", "unknown"))
         return file_ref
 
-    async def extract_claims(
+    def extract_claims(
         self, file_ref: Any, prompt: str, response_schema: dict
     ) -> dict:
         """Run structured extraction. Returns parsed JSON dict."""
@@ -90,7 +87,7 @@ class GeminiClient:
                 ],
             }
 
-        response = await self._generate_structured_response(
+        response = self._generate_structured_response(
             contents=[file_ref, prompt],
             response_schema=response_schema,
         )
@@ -99,7 +96,7 @@ class GeminiClient:
             return parsed
 
         # Required hardening: one retry on malformed JSON, then retain raw text + error flag.
-        retry_response = await self._generate_structured_response(
+        retry_response = self._generate_structured_response(
             contents=[file_ref, prompt],
             response_schema=response_schema,
         )
@@ -108,7 +105,7 @@ class GeminiClient:
             return retry_parsed
         return self._malformed_json_payload(retry_response)
 
-    async def generate_text(self, prompt: str, context: str = "") -> str:
+    def generate_text(self, prompt: str, context: str = "") -> str:
         """Free-form text generation for narratives."""
         full_prompt = f"{context}\n\n{prompt}" if context else prompt
         if self._mock_mode:
@@ -116,14 +113,10 @@ class GeminiClient:
 
         for attempt in range(_RETRY_ATTEMPTS):
             try:
-                await self._throttle()
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self._client.models.generate_content(
-                        model=self._model_name,
-                        contents=full_prompt,
-                    ),
+                self._throttle()
+                response = self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=full_prompt,
                 )
                 return response.text
             except Exception as exc:
@@ -131,7 +124,7 @@ class GeminiClient:
                     raise
                 if attempt < _RETRY_ATTEMPTS - 1:
                     delay = _RETRY_BASE_DELAY * (2**attempt)
-                    await asyncio.sleep(delay)
+                    sleep(delay)
                 else:
                     raise
 
@@ -147,7 +140,7 @@ class GeminiClient:
         except Exception as exc:
             logger.warning("Could not delete Gemini file: %s", exc)
 
-    async def _generate_structured_response(
+    def _generate_structured_response(
         self,
         *,
         contents: Any,
@@ -155,18 +148,14 @@ class GeminiClient:
     ) -> Any:
         for attempt in range(_RETRY_ATTEMPTS):
             try:
-                await self._throttle()
-                loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(
-                    None,
-                    lambda: self._client.models.generate_content(
-                        model=self._model_name,
-                        contents=contents,
-                        config={
-                            "response_mime_type": "application/json",
-                            "response_schema": response_schema,
-                        },
-                    ),
+                self._throttle()
+                return self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=contents,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": response_schema,
+                    },
                 )
             except Exception as exc:
                 if not self._is_rate_limit_error(exc):
@@ -174,7 +163,7 @@ class GeminiClient:
                 if attempt < _RETRY_ATTEMPTS - 1:
                     delay = _RETRY_BASE_DELAY * (2**attempt)
                     logger.warning("Rate limited; retrying in %.1fs", delay)
-                    await asyncio.sleep(delay)
+                    sleep(delay)
                 else:
                     raise
         raise RuntimeError("Structured generation exhausted retries")
@@ -219,6 +208,5 @@ class GeminiClient:
 
 
 def get_gemini_client() -> GeminiClient:
-    # Return a fresh client per caller so asyncio primitives (e.g. Lock)
-    # are always bound to the currently running event loop.
+    # Return a fresh client per caller to keep lock state scoped per task.
     return GeminiClient()

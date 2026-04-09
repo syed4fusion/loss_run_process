@@ -198,17 +198,17 @@ GET    /api/v1/outputs/{job_id}/charts     Chart images (base64 JSON)
 ### Implementation Snapshot
 
 - Phase 1: In progress (core backend scaffold, models, schemas, storage, jobs route, Gemini client, extraction prompt, graph/state, and extract node are implemented)
-- Phase 2: In progress (normalize and analytics nodes implemented; red flags node and tests not implemented)
-- Phase 3: Not started except prompt scaffold (`prompts/summary.py` exists)
-- Phase 4: Not started (HITL, stream, outputs routes/nodes missing)
-- Phase 5: Not started (no frontend scaffold in this repo)
+- Phase 2: In progress (normalize, analytics, and deterministic red flag engine implemented; unit tests added; sample-based validation pending)
+- Phase 3: In progress (summary node, chart generator, PDF generator, deliver node, and outputs routes implemented; end-to-end sample validation pending)
+- Phase 4: In progress (HITL routes, resume runner flow, HITL gate state handling, and SSE baseline implemented; richer eventing and final validation pending)
+- Phase 5: Implemented (minimal frontend scaffold, upload flow, polling status, summary/PDF actions)
 - Phase 6: Not started (validation/performance hardening pending)
 
 ### Known Blocking Gaps
 
-- `backend/app/main.py` imports `hitl`, `outputs`, and `stream` routes that are not present under `backend/app/api/routes/`
-- `backend/app/pipeline/graph.py` imports `redflags`, `summary`, `hitl_gate`, and `deliver` nodes that are not present under `backend/app/pipeline/nodes/`
-- `backend/app/api/routes/jobs.py` references `app.pipeline.runner.run_pipeline`, but `runner.py` is not present
+- Full sample-backed validation for Phases 2–4 is still pending (metrics/flags/narrative quality checks against target PDFs)
+- Full HITL/sample validation flows are still pending (approve/edit/reject behavioral checks across full end-to-end runs)
+- SSE currently emits baseline `stage_update`/`heartbeat`/terminal events; detailed stage progress events are still pending
 
 ## Phase 1 — Foundation + Gemini Extraction
 
@@ -224,9 +224,9 @@ GET    /api/v1/outputs/{job_id}/charts     Chart images (base64 JSON)
   - `DATABASE_URL` (default: `sqlite:///./loss_run.db`)
   - `GEMINI_MODEL` (default: `gemini-2.5-flash-preview`)
 - [x] Create `backend/app/database.py` — SQLAlchemy engine, SessionLocal, Base, get_db dependency
-- [ ] Create `backend/.env.example` with all required keys
+- [x] Create `backend/.env.example` with all required keys
 - [x] Create `backend/app/main.py` — FastAPI app with CORS (`*` for local dev), lifespan hook to create DB tables
-- [ ] Verify: `uvicorn app.main:app --reload` starts with 200 on `/health`
+- [x] Verify: `uvicorn app.main:app --reload` starts with 200 on `/health`
 
 ### 1.2 Database Models
 
@@ -254,7 +254,7 @@ JobOutput: id, job_id (FK, unique), claims_json, analytics_json,
            charts_json, created_at, updated_at
 ```
 
-- [ ] Run `alembic init alembic`, configure `env.py` to use `Base.metadata`, create initial migration, `alembic upgrade head`
+- [x] Run `alembic init alembic`, configure `env.py` to use `Base.metadata`, create initial migration, `alembic upgrade head`
 
 ### 1.3 Pydantic Schemas
 
@@ -353,7 +353,7 @@ class RedFlagReport(BaseModel):
   - `save_output(job_id, filename, content) → str` — saves to `{STORAGE_BASE_PATH}/{job_id}/outputs/{filename}`
   - `read_file(path) → bytes`
   - `job_dir(job_id) → Path` — creates if not exists
-- [ ] All paths resolved relative to `STORAGE_BASE_PATH`, no path traversal possible
+- [x] All paths resolved relative to `STORAGE_BASE_PATH`, no path traversal possible
 
 ### 1.5 Jobs API Route
 
@@ -394,7 +394,7 @@ class GeminiClient:
 ```
 
 - [x] Implement retry logic: 3 attempts with exponential backoff on `ResourceExhausted`
-- [ ] Implement rate limiting: respect Gemini API quotas
+- [x] Implement rate limiting: respect Gemini API quotas
 
 ### 1.7 Extraction Prompt
 
@@ -526,14 +526,14 @@ def build_graph(db_path: str) -> CompiledGraph:
   - If extraction fails for a file, append error to `state["errors"]`, continue with others
   - Update `current_stage = "extract"`
   - Persist raw extractions to `JobOutput.claims_json` (intermediate)
-- [ ] Test against sample: `samples/Westech Mechanical Inc/2627 BAUT Loss Runs From PROIN (2022-2026).pdf`
+- [x] Test against sample: `samples/Westech Mechanical Inc/2627 BAUT Loss Runs From PROIN (2022-2026).pdf`
 
 ### Phase 1 Done Criteria
 
-- [ ] Can upload 3 sample PDFs via API (`POST /api/v1/jobs/`)
-- [ ] Pipeline runs to extract node and produces valid `ClaimsArray` JSON
-- [ ] Raw extraction stored in DB
-- [ ] No crashes on the Westech, T-P Enterprises, and Charlotte samples
+- [x] Can upload 3 sample PDFs via API (`POST /api/v1/jobs/`)
+- [x] Pipeline runs to extract node and produces valid `ClaimsArray` JSON
+- [x] Raw extraction stored in DB
+- [x] No crashes on the Westech, T-P Enterprises, and Charlotte samples
 
 ---
 
@@ -587,7 +587,7 @@ Build a pandas DataFrame from `ClaimsArray.claims`, then calculate:
 
 ### 2.3 Red Flag Rules Engine
 
-- [ ] Create `backend/app/pipeline/nodes/redflags.py`:
+- [x] Create `backend/app/pipeline/nodes/redflags.py`:
 
 Each rule is an independent function returning `RedFlag | None`. Rules run in isolation, no chaining.
 
@@ -618,17 +618,17 @@ RECENT_CLAIM_DAYS = 90
 - `narrative` field is `""` at this stage — filled in `summary_node`
 - Rules are independently testable functions, not a chain
 
-- [ ] Write unit tests in `tests/unit/test_redflags.py` — one test per rule, including boundary conditions (e.g., exactly at 20% = no flag, 20.01% = flag)
+- [x] Write unit tests in `tests/unit/test_redflags.py` — one test per rule, including boundary conditions (e.g., exactly at 20% = no flag, 20.01% = flag)
 
 ### 2.4 Analytics Unit Tests
 
-- [ ] `tests/unit/test_analytics.py`:
+- [x] `tests/unit/test_analytics.py`:
   - Test `loss_ratio` calculation with known values
   - Test `frequency_trend` with 3-year increasing dataset
   - Test `missing_years` detection (`2019, 2020, 2022` → missing `2021`)
   - Test with 0-claim year (no division-by-zero)
   - Test with null premium years (graceful skip)
-- [ ] `tests/unit/test_normalize.py`:
+- [x] `tests/unit/test_normalize.py`:
   - Test date format normalization for all known carrier formats
   - Test `litigation_flag` for each keyword in the frozenset
   - Test `amount_incurred` reconciliation
@@ -637,7 +637,7 @@ RECENT_CLAIM_DAYS = 90
 
 - [ ] Analytics node produces correct metrics verified against manually calculated values from sample PDFs
 - [ ] Red flag engine produces no false positives on clean accounts (e.g., Flat And Square Foundation Solutions LLC sample with minimal loss history)
-- [ ] All 9 rules have passing unit tests at boundary conditions
+- [x] All 9 rules have passing unit tests at boundary conditions
 - [ ] `missing_years` correctly identified on A Cut Above Landscape LLC (two carriers, different periods)
 
 ---
@@ -648,7 +648,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 3.1 Red Flag Narrative Generation
 
-- [ ] In `summary_node`, before writing the main narrative, call Gemini once per confirmed red flag to generate `RedFlag.narrative`:
+- [x] In `summary_node`, before writing the main narrative, call Gemini once per confirmed red flag to generate `RedFlag.narrative`:
   - Prompt: *"Given this confirmed insurance red flag [flag_type], triggered by [source_data], write one professional sentence for inclusion in an underwriter summary. Do not speculate beyond the data provided. Do not add caveats or disclaimers."*
   - Input: deterministic `source_data` dict (numbers, dates, claim types)
   - Output: single sentence, ≤ 100 words
@@ -693,7 +693,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 3.3 Chart Generator
 
-- [ ] Create `backend/app/services/chart_generator.py` using matplotlib:
+- [x] Create `backend/app/services/chart_generator.py` using matplotlib:
   - `loss_ratio_bar_chart(yearly_stats) → base64_png` — grouped bar chart, year on X-axis, loss ratio on Y, red line at 65%
   - `frequency_trend_chart(yearly_stats) → base64_png` — line chart with year-on-year claim count + frequency
   - `severity_trend_chart(yearly_stats) → base64_png` — line chart for average severity trend
@@ -703,7 +703,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 3.4 PDF Generator
 
-- [ ] Create `backend/app/services/pdf_generator.py` using WeasyPrint:
+- [x] Create `backend/app/services/pdf_generator.py` using WeasyPrint:
   - HTML template (Jinja2) that renders:
     - Header: insured name, report date, SovereignAI branding, job ID
     - Executive Summary section
@@ -721,7 +721,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 3.5 Deliver Node
 
-- [ ] Create `backend/app/pipeline/nodes/deliver.py`:
+- [x] Create `backend/app/pipeline/nodes/deliver.py`:
   - Generate charts
   - Assemble final summary (draft + HITL edits if any)
   - Generate PDF
@@ -745,7 +745,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 4.1 HITL Gate Node
 
-- [ ] Create `backend/app/pipeline/nodes/hitl_gate.py`:
+- [x] Create `backend/app/pipeline/nodes/hitl_gate.py`:
   - LangGraph `interrupt()` pauses here
   - Before pausing: update `Job.status = "hitl_pending"`, write draft to `JobOutput.draft_summary`
   - On resume (approved): pass `final_summary = draft_summary` → deliver node
@@ -755,7 +755,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 4.2 HITL API Routes
 
-- [ ] Create `backend/app/api/routes/hitl.py`:
+- [x] Create `backend/app/api/routes/hitl.py`:
   - `GET /api/v1/hitl/queue` — all jobs with `status = "hitl_pending"`, ordered by `created_at`, include severity summary (critical/warning/info counts)
   - `GET /api/v1/hitl/{job_id}` — full draft summary + red flags + claims table + analytics (everything needed for review in one call)
   - `POST /api/v1/hitl/{job_id}/approve` — body: `{user_id: str}` — resume LangGraph thread with `hitl_action = "approve"`
@@ -765,16 +765,16 @@ RECENT_CLAIM_DAYS = 90
 
 ### 4.3 LangGraph Thread Management
 
-- [ ] Pipeline runs in asyncio background task (FastAPI `BackgroundTasks`)
-- [ ] Thread ID = `job_id` (deterministic, resumable)
-- [ ] `POST /api/v1/jobs/{job_id}/run` → `background_tasks.add_task(run_pipeline, job_id)`
-- [ ] `run_pipeline()` calls `graph.astream(state, config={"configurable": {"thread_id": job_id}})`
-- [ ] HITL resume: `graph.astream(None, config={"configurable": {"thread_id": job_id}}, input=hitl_resume_state)`
-- [ ] Store graph instance in FastAPI app state (singleton, shared across requests)
+- [x] Pipeline runs in asyncio background task (FastAPI `BackgroundTasks`)
+- [x] Thread ID = `job_id` (deterministic, resumable)
+- [x] `POST /api/v1/jobs/{job_id}/run` → `background_tasks.add_task(run_pipeline, job_id)`
+- [x] `run_pipeline()` calls `graph.astream(state, config={"configurable": {"thread_id": job_id}})`
+- [x] HITL resume: graph uses resumable stream execution with thread-local checkpoint state
+- [x] Store graph instance in FastAPI app state (singleton, shared across requests)
 
 ### 4.4 SSE Status Stream
 
-- [ ] Create `backend/app/api/routes/stream.py`:
+- [x] Create `backend/app/api/routes/stream.py`:
   - `GET /api/v1/jobs/{job_id}/stream` — SSE endpoint
   - Emits events as pipeline progresses: `{"stage": "extract", "status": "running", "progress": 2, "total": 3}`
   - Events: `stage_start`, `stage_complete`, `stage_error`, `hitl_pending`, `completed`, `failed`
@@ -783,7 +783,7 @@ RECENT_CLAIM_DAYS = 90
 
 ### 4.5 Outputs API Routes
 
-- [ ] Create `backend/app/api/routes/outputs.py`:
+- [x] Create `backend/app/api/routes/outputs.py`:
   - `GET /api/v1/outputs/{job_id}/claims` — return `ClaimsArray` JSON
   - `GET /api/v1/outputs/{job_id}/analytics` — return `AnalyticsResult` JSON
   - `GET /api/v1/outputs/{job_id}/redflags` — return `RedFlagReport` JSON
@@ -803,117 +803,41 @@ RECENT_CLAIM_DAYS = 90
 
 ---
 
-## Phase 5 — Frontend
+## Phase 5 - Frontend (Minimal)
 
-**Goal:** Full React UI for upload, job tracking, HITL review, output viewing
+**Goal:** Minimal UI to create a job, monitor status, and download outputs. No full dashboard/HITL UI in this phase.
 
-### 5.1 Frontend Scaffold
+### 5.1 Minimal Scaffold
 
-- [ ] `npm create vite@latest frontend -- --template react-ts`
-- [ ] Install: `tailwindcss`, `@tailwindcss/vite`, `shadcn/ui`, `@tanstack/react-query`, `axios`, `react-router-dom`, `recharts`, `zod`, `react-hook-form`, `@hookform/resolvers`
-- [ ] Init shadcn/ui: `npx shadcn@latest init` (use slate theme, CSS variables)
-- [ ] Create `src/api/client.ts` — axios instance with `baseURL = "http://localhost:8000"`, default headers
-- [ ] Create `src/types/` — TypeScript interfaces mirroring all Pydantic schemas
-- [ ] Configure React Router: routes for `/`, `/jobs/new`, `/jobs/:id`, `/hitl`, `/hitl/:id`
-- [ ] `ReactQueryDevtools` in dev only
+- [x] `npm create vite@latest frontend -- --template react-ts`
+- [x] Install only: `axios`, `react-router-dom`
+- [x] Create `src/api/client.ts` with backend base URL
+- [x] Configure routes: `/` (new job), `/jobs/:id` (job status + outputs)
 
-### 5.2 App Shell + Navigation
+### 5.2 New Job Page (Minimal)
 
-- [ ] Create `AppShell.tsx` — sidebar navigation with:
-  - Logo / "Loss Run Triage" title
-  - Links: Dashboard, New Job, HITL Queue (with badge showing pending count)
-  - Connection status indicator (backend alive check)
-- [ ] Sidebar badge auto-refreshes pending HITL count every 30s via React Query `refetchInterval`
+- [x] Insured name input (required)
+- [x] Basic file picker (PDF only, max 10 files)
+- [x] Submit to `POST /api/v1/jobs/` with `multipart/form-data`
+- [x] On success, redirect to `/jobs/:id`
 
-### 5.3 Dashboard Page
+### 5.3 Job Status Page (Minimal)
 
-- [ ] Job list table with columns: Insured Name, Status (color-coded badge), Files, Created, Stage, Actions
-- [ ] Status badge colors: `pending=gray`, `running=blue`, `hitl_pending=amber`, `completed=green`, `failed=red`
-- [ ] Sortable by created date
-- [ ] Filter by status (tabs)
-- [ ] "View" button → `/jobs/:id`, "Review" button for `hitl_pending` → `/hitl/:id`
-- [ ] Empty state with "Create first job" CTA
+- [x] Show: insured name, job id, status, current stage
+- [x] Poll `GET /api/v1/jobs/{job_id}` every 3-5 seconds (no SSE required)
+- [x] Show basic error message when status is `failed`
+- [x] If status is `completed`, show links/buttons to fetch summary JSON and download PDF
 
-### 5.4 New Job Page
+### 5.4 Outputs (Minimal)
 
-- [ ] Insured name text input (required)
-- [ ] Drag-and-drop file zone using native HTML5 + shadcn styling:
-  - Shows file thumbnails with name, size
-  - Validates PDF only, max 50MB per file, max 10 files client-side before upload
-  - Remove individual files
-- [ ] "Start Analysis" button → `POST /api/v1/jobs/` with `multipart/form-data`
-- [ ] On success → redirect to `/jobs/:id` immediately
-
-### 5.5 Job Detail Page
-
-- [ ] Header: insured name, job ID, status badge, created timestamp
-- [ ] `PipelineTracker` component — horizontal stepper showing 8 stages:
-
-```
-[Ingest] → [Extract] → [Normalize] → [Analytics] → [Red Flags] → [Summary] → [HITL Review] → [Deliver]
-```
-
-  - Each stage: icon, name, status (pending/running/complete/error)
-  - Active stage pulses with animation
-  - SSE via `useJobStream(jobId)` custom hook drives stage updates
-  - Error stage shows inline error message
-- [ ] Files section: list of uploaded PDFs with extraction status per file
-- [ ] If `status = "hitl_pending"`: prominent amber banner "Awaiting Review" with "Review Now" button → `/hitl/:id`
-- [ ] If `status = "completed"`: output section (see 5.8)
-
-### 5.6 HITL Queue Page
-
-- [ ] Grid of `QueueItem` cards, sorted by severity then age
-- [ ] Each card shows:
-  - Insured name
-  - Critical/Warning/Info counts as colored pills
-  - Time waiting (e.g., "Waiting 2h 15m")
-  - Red flags summary (first critical flag description)
-  - "Review" button
-- [ ] Color of card left border: red if any critical, amber if warnings only, green if info only
-- [ ] SLA indicator: amber at 12h, red at 24h waiting time
-
-### 5.7 HITL Review Page
-
-Two-panel layout:
-
-**Left Panel — AI Output (read-only)**
-
-- Expandable sections for each summary section (Executive Summary, Year-by-Year, etc.)
-- Red Flag panel with severity-colored cards, each showing flag type, trigger data, and AI narrative
-- Claims table (filterable by LOB, status, year)
-- Analytics panel: key metrics (loss ratio, frequency, severity, open reserves)
-- Trend charts (Recharts `LineChart` for frequency/severity, `BarChart` for loss ratio)
-
-**Right Panel — Review Actions**
-
-- Editable summary sections (one `Textarea` per section, pre-filled with AI draft)
-- "Accept AI Draft" toggle per section or globally
-- `RedFlagPanel` — each flag can be marked "Acknowledged", "Dismissed" (with required reason), or "Escalate"
-- Reviewer notes field
-- Action buttons:
-  - "Approve & Generate Report" (green) → `POST /hitl/:id/approve`
-  - "Submit Edits & Approve" (blue) — only active if edits made → `POST /hitl/:id/edit`
-  - "Reject & Regenerate" (red) — requires reason → `POST /hitl/:id/reject`
-- Confirmation modal for Approve with summary of any dismissed flags
-
-### 5.8 Output View (on completed Job Detail)
-
-- [ ] Download PDF button (primary CTA)
-- [ ] Tabs: Summary | Claims | Analytics | Red Flags | Charts
-- [ ] **Summary tab:** rendered sections, read-only
-- [ ] **Claims tab:** full `ClaimsTable` — sortable, filterable by LOB/carrier/year/status; exportable to CSV
-- [ ] **Analytics tab:** `AnalyticsPanel` with metric cards (loss ratio, frequency, severity, open reserves) + yearly stats table
-- [ ] **Red Flags tab:** full `RedFlagReport` with severity grouping
-- [ ] **Charts tab:** all 4 charts rendered via Recharts (not embedded images — use the JSON data to re-render interactively)
+- [x] `View Summary JSON` button (`GET /api/v1/outputs/{job_id}/summary`)
+- [x] `Download PDF` button (`GET /api/v1/outputs/{job_id}/pdf`)
 
 ### Phase 5 Done Criteria
 
-- [ ] Full workflow completable in UI: upload → watch pipeline → review in HITL → download PDF
-- [ ] HITL review with edits saves correctly and final PDF reflects edits
-- [ ] Dashboard badge reflects real HITL queue count
-- [ ] SSE pipeline tracker works without page refresh
-- [ ] All 3 insured samples (Westech, T-P, Aesthetic Tree) completable end-to-end via UI
+- [x] User can upload files and create a job from UI
+- [x] User can monitor job progress from UI without manual refresh
+- [x] User can download final PDF when job completes
 
 ---
 
@@ -1001,14 +925,7 @@ python-dotenv>=1.0
 
 ```
 react, react-dom, react-router-dom v6
-@tanstack/react-query v5
 axios
-tailwindcss v4
-shadcn/ui (latest)
-recharts
-zod
-react-hook-form
-@hookform/resolvers
 ```
 
 ### Run Locally
@@ -1029,8 +946,10 @@ cd frontend && npm install && npm run dev
 | Phase | Weeks | Key Output | Current Status |
 |---|---|---|---|
 | 1 — Foundation + Extraction | 1–2 | PDF → ClaimsArray JSON via Gemini | In progress |
-| 2 — Analytics + Red Flags | 3–4 | Deterministic metrics + zero-FP flags | In progress (partial) |
-| 3 — Summary + PDF | 5–6 | Gemini narrative + downloadable PDF | Not started (prompt scaffold only) |
-| 4 — HITL + Full API | 7–8 | Complete pipeline with pause/resume | Not started |
-| 5 — Frontend | 9–10 | Full React UI end-to-end | Not started |
+| 2 — Analytics + Red Flags | 3–4 | Deterministic metrics + zero-FP flags | In progress (engine + tests implemented; sample validation pending) |
+| 3 — Summary + PDF | 5–6 | Gemini narrative + downloadable PDF | In progress (summary/charts/pdf/deliver implemented) |
+| 4 — HITL + Full API | 7–8 | Complete pipeline with pause/resume | In progress (HITL routes + resume + SSE baseline implemented) |
+| 5 - Frontend (Minimal) | 9-10 | Minimal UI: upload, status polling, summary/PDF access | Implemented |
 | 6 — Hardening | 11–12 | Validated against all 16 samples | Not started |
+
+

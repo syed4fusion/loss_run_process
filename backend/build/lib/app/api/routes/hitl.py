@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -180,8 +179,8 @@ def reject_hitl(
     return {"message": "Rejection received. Summary regeneration started.", "job_id": job_id}
 
 
-async def _resume_pipeline_bg(job_id: str, hitl_action: str, hitl_edit_content: str | None):
-    await resume_pipeline(
+def _resume_pipeline_bg(job_id: str, hitl_action: str, hitl_edit_content: str | None):
+    resume_pipeline(
         job_id=job_id,
         hitl_action=hitl_action,
         hitl_edit_content=hitl_edit_content,

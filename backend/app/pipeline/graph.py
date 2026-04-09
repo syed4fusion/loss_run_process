@@ -1,5 +1,4 @@
 import logging
-import inspect
 from time import perf_counter
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -20,22 +19,6 @@ logger = logging.getLogger(__name__)
 
 
 def _timed_node(node_name: str, node_fn):
-    if inspect.iscoroutinefunction(node_fn):
-        async def _wrapped(state: PipelineState) -> PipelineState:
-            start = perf_counter()
-            try:
-                return await node_fn(state)
-            finally:
-                elapsed = perf_counter() - start
-                logger.info(
-                    "Stage timing: job=%s stage=%s elapsed=%.3fs",
-                    state.get("job_id"),
-                    node_name,
-                    elapsed,
-                )
-
-        return _wrapped
-
     def _wrapped(state: PipelineState) -> PipelineState:
         start = perf_counter()
         try:
