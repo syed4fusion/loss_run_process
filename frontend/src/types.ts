@@ -116,9 +116,3 @@ export type HitlDetailResponse = {
   claims: ClaimsArray;
   analytics: AnalyticsResult;
 };
-
-export type ReviewSnapshot = {
-  claims: ClaimsArray;
-  summary: SummarySections;
-  updated_at: string;
-};
